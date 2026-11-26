@@ -1,4 +1,35 @@
-# PWM_Stepper
+# V3S_Stepper_Firmware
+Firmware do robô VSSS V3S com motores de passo, para a placa **V3s stepper** (ESP32-C3 SuperMini + 2× DRV8825 + GY-521).
+
+> Baseado no branch `esp_now` de [iOsnaaente/VSSS_Stepper](https://github.com/iOsnaaente/VSSS_Stepper) (commit `6944a05`), com o histórico preservado.
+> A GUI de testes (com keepalive de velocidade) fica no branch `icaro_no_ramp` do repositório privado `TauraBots/V3S_IDF_32_Firmware` e ainda não foi trazida para cá.
+
+## 🔌 Hardware / Pinagem
+Placa de duas camadas (superior com o ESP32-C3, inferior com os drivers), ligadas por um conector 2×6. Pinagem conferida com o esquemático `V3s.kicad_sch`:
+
+| ESP32-C3 | Sinal | Destino |
+|----------|-------|---------|
+| GPIO0 | `M1_VEL_PIN` (STEP_1) | DRV8825 #1 STEP |
+| GPIO4 | `M1_DIR_PIN` (DIR_1) | DRV8825 #1 DIR |
+| GPIO1 | `M2_VEL_PIN` (STEP_2) | DRV8825 #2 STEP |
+| GPIO5 | `M2_DIR_PIN` (DIR_2) | DRV8825 #2 DIR |
+| GPIO10 | `ENABLE_PIN` | ~EN dos dois drivers (ativo em nível baixo) |
+| GPIO8 / GPIO9 | I2C SDA / SCL | GY-521 (MPU6050), OLED, conector I2C aux |
+| GPIO3 | Bat_S | Sensor de bateria (divisor ainda não montado) |
+
+- Microstep: jumpers M0–M2 em 3V3 por padrão → **1/32**.
+- ~SLP ligado em 3V3; ~RST com pull-up e botão de reset.
+
+## 🔧 Build
+PlatformIO, ambiente `esp32c3-supermini` (Arduino). Transporte padrão: ESP-NOW no canal 6 (`-DUSE_ESPNOW_TRANSPORT`, `-DESPNOW_CHANNEL=6` em `platformio.ini`).
+
+```
+pio run -e esp32c3-supermini -t upload
+```
+
+---
+
+## Notas originais (PWM_Stepper)
 Controle de motores de passo usando bloco de comando PWM dentro do ESP32.
 
 ## 📡 Conectividade (WiFi + UDP)
