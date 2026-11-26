@@ -133,8 +133,9 @@ void ProtocolComm::parser_Handle(){
             continue;
         }
 
-        // Throttled RX log (~4 Hz) so the OLED + serial don't drown at command rates.
-        // Logs every packet that parsed, before the ID filter drops anything.
+        // Throttled RX log (~4 Hz). Off by default: it holds the serial mutex
+        // while the OLED redraws, delaying protocol frames by up to ~20 ms.
+#ifdef DEBUG_PROTO_RX
         {
             static uint32_t last_rx_log_ms = 0;
             uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
@@ -148,6 +149,7 @@ void ProtocolComm::parser_Handle(){
                 last_rx_log_ms = now_ms;
             }
         }
+#endif
 
         parsed_msg = new ProtocolParsed_t();
         if ( parsed_msg == nullptr ) {
@@ -698,4 +700,25 @@ CommRet_t ProtocolComm::send_request_sync(
         this->clear_inflight_slot(slot);
         return COMM_RET_TIMEOUT;
     }
+}
+
+
+CommRet_t ProtocolComm::send_packet(
+    uint8_t flags,
+    uint8_t cmd,
+    uint16_t seq,
+    const void *payload,
+    size_t len,
+    const CommAddr_t &dest
+){
+    if (len > 255) return COMM_RET_INVALID_ARG;
+    ProtoPacket_t packet;
+    memset(&packet, 0, sizeof(packet));
+    packet.header.flags       = flags;
+    packet.header.id          = this->id_device;
+    packet.header.cmd         = cmd;
+    packet.header.seq         = seq;
+    packet.header.payload_len = (uint8_t)len;
+    packet.payload            = (uint8_t*)payload;
+    return this->send_protocol_packet(packet, dest);
 }

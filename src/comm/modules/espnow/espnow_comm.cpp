@@ -9,6 +9,7 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_mac.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
 
 #include <string.h>
@@ -76,17 +77,34 @@ CommRet_t ESPNowComm::init() {
         return COMM_RET_IO_ERROR;
     }
 
+    if (!peer_mutex) peer_mutex = xSemaphoreCreateMutex();
+
     esp_wifi_set_storage(WIFI_STORAGE_RAM);
     esp_wifi_set_mode(WIFI_MODE_STA);
+    // Allow channels 1..13 regardless of the default country policy.
+    wifi_country_t country = { .cc = "BR", .schan = 1, .nchan = 13,
+                               .max_tx_power = 20, .policy = WIFI_COUNTRY_POLICY_MANUAL };
+    esp_wifi_set_country(&country);
     esp_wifi_start();
+    // No modem sleep: the radio must always be listening (latency + no lost frames).
     esp_wifi_set_ps(WIFI_PS_NONE);
-    esp_wifi_set_max_tx_power(80);
+    esp_wifi_set_max_tx_power(cfg->tx_power ? cfg->tx_power : 80);
 
-    // Fix the channel. Must match the gateway.
+    // Fix the channel (no HT40). Must match the controller / bridge.
     ret = esp_wifi_set_channel(cfg->channel, WIFI_SECOND_CHAN_NONE);
     if (ret != ESP_OK) {
         ESP_LOGW("ESPNOW INIT", "esp_wifi_set_channel(%u): %s",
             (unsigned)cfg->channel, esp_err_to_name(ret));
+    }
+
+    // PHY rate for ESP-NOW frames. Higher rate = shorter airtime = fewer
+    // collisions when many robots share a channel (receivers accept any rate).
+    if (cfg->phy_rate) {
+        ret = esp_wifi_config_espnow_rate(WIFI_IF_STA, (wifi_phy_rate_t)cfg->phy_rate);
+        if (ret != ESP_OK) {
+            ESP_LOGW("ESPNOW INIT", "esp_wifi_config_espnow_rate(%u): %s",
+                (unsigned)cfg->phy_rate, esp_err_to_name(ret));
+        }
     }
 
     // ESP-NOW init + callbacks
@@ -103,7 +121,7 @@ CommRet_t ESPNowComm::init() {
     // must be false.
     esp_now_peer_info_t peer = {};
     memcpy(peer.peer_addr, cfg->peer_mac, 6);
-    peer.channel = cfg->channel;
+    peer.channel = 0;   // 0 = follow the current channel (so set_channel() just works)
     peer.ifidx   = WIFI_IF_STA;
     peer.encrypt = false;
     esp_err_t pe = esp_now_add_peer(&peer);
@@ -186,14 +204,76 @@ CommRet_t ESPNowComm::send_to(const CommMessage_t &msg,
         target_mac = cfg->peer_mac;
     }
 
+    // Unicast needs the peer registered (MAC-layer ACK + hardware retries).
+    static const uint8_t bcast[6] = ESPNOW_BROADCAST_MAC;
+    if (memcmp(target_mac, bcast, 6) != 0 && !ensure_peer(target_mac)) {
+        tx_fail++;
+        set_last_error(COMM_RET_IO_ERROR);
+        return COMM_RET_IO_ERROR;
+    }
+
     esp_err_t e = esp_now_send(target_mac, msg.payload, msg.length);
     if (e != ESP_OK) {
-        ESP_LOGW("ESPNOW TX", "esp_now_send: %s", esp_err_to_name(e));
+        tx_fail++;
         set_last_error(COMM_RET_IO_ERROR);
         return COMM_RET_IO_ERROR;
     }
     msg_sent++;
     return COMM_RET_OK;
+}
+
+
+bool ESPNowComm::ensure_peer(const uint8_t mac[6]) {
+    if (!peer_mutex) return false;
+    xSemaphoreTake(peer_mutex, portMAX_DELAY);
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    int free_slot = -1, lru_slot = 0;
+    for (int i = 0; i < ESPNOW_MAX_UNICAST_PEERS; i++) {
+        if (peer_used[i] && memcmp(peer_mac[i], mac, 6) == 0) {
+            peer_last_use[i] = now;
+            xSemaphoreGive(peer_mutex);
+            return true;
+        }
+        if (!peer_used[i] && free_slot < 0) free_slot = i;
+        if (peer_used[i] && (now - peer_last_use[i]) > (now - peer_last_use[lru_slot])) lru_slot = i;
+    }
+    int slot = free_slot;
+    if (slot < 0) {                       // evict least recently used
+        slot = lru_slot;
+        esp_now_del_peer(peer_mac[slot]);
+        peer_used[slot] = false;
+    }
+    esp_now_peer_info_t peer = {};
+    memcpy(peer.peer_addr, mac, 6);
+    peer.channel = 0;                     // follow current channel
+    peer.ifidx   = WIFI_IF_STA;
+    peer.encrypt = false;
+    esp_err_t e = esp_now_add_peer(&peer);
+    bool ok = (e == ESP_OK || e == ESP_ERR_ESPNOW_EXIST);
+    if (ok) {
+        memcpy(peer_mac[slot], mac, 6);
+        peer_last_use[slot] = now;
+        peer_used[slot] = true;
+    }
+    xSemaphoreGive(peer_mutex);
+    return ok;
+}
+
+
+CommRet_t ESPNowComm::set_channel(uint8_t channel) {
+    if (!cfg || channel < 1 || channel > 13) return COMM_RET_INVALID_ARG;
+    esp_err_t e = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+    if (e != ESP_OK) {
+        ESP_LOGW("ESPNOW", "set_channel(%u): %s", (unsigned)channel, esp_err_to_name(e));
+        return COMM_RET_IO_ERROR;
+    }
+    cfg->channel = channel;
+    return COMM_RET_OK;
+}
+
+
+void ESPNowComm::get_self_mac(uint8_t mac[6]) const {
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
 }
 
 
@@ -267,7 +347,9 @@ void ESPNowComm::on_recv(const uint8_t *src_mac,
     }
     // Best-effort enqueue. If the queue is full we drop the packet rather than
     // block the radio task - upper layer / retransmit logic handles loss.
-    (void)xQueueSend(self->rx_Queue, &msg, 0);
+    if (xQueueSend(self->rx_Queue, &msg, 0) != pdTRUE) {
+        self->rx_drop++;
+    }
 }
 
 
@@ -275,7 +357,9 @@ void ESPNowComm::on_send(const uint8_t *mac_addr,
                          esp_now_send_status_t status)
 {
     (void)mac_addr;
-    (void)status;
-    // Hook left empty intentionally. If you later want per-packet ACK telemetry
-    // for unicast peers, populate a small counter here.
+    ESPNowComm *self = s_instance;
+    if (!self) return;
+    // For unicast this reflects the MAC-layer ACK after hardware retries.
+    if (status == ESP_NOW_SEND_SUCCESS) self->tx_ok++;
+    else                                self->tx_fail++;
 }

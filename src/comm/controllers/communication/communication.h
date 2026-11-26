@@ -27,7 +27,7 @@ class ProtocolComm {
     private:
         const char *description;
         CommBase *comm_base;
-        int8_t id_device;
+        uint8_t id_device;   // was int8_t: IDs >= 0x80 never matched their own packets
 
         std::atomic<uint16_t> seq_counter{0};
 
@@ -186,6 +186,20 @@ class ProtocolComm {
             size_t len,
             const CommAddr_t &dest
         );
+
+        /** Send one packet with explicit flags/seq (no retries, no inflight
+         *  tracking). Header id is this device's id. Used for replies that are
+         *  sent later (e.g. jittered discovery) and for streaming telemetry. */
+        CommRet_t send_packet(
+            uint8_t flags,
+            uint8_t cmd,
+            uint16_t seq,
+            const void *payload,
+            size_t len,
+            const CommAddr_t &dest
+        );
+
+        uint16_t next_seq() { return this->seq_counter.fetch_add(1); }
 
     private:
         CommRet_t send_protocol_packet(

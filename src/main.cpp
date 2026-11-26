@@ -26,8 +26,13 @@
 
 #ifdef USE_ESPNOW_TRANSPORT
   #include "modules/espnow/espnow_comm.h"
+  #include "modules/usbserial/usb_serial_comm.h"
+  #include "link/robot_link.h"
   #ifndef ESPNOW_CHANNEL
-    #define ESPNOW_CHANNEL 6
+    #define ESPNOW_CHANNEL 6          // default; the stored channel (SET_CHANNEL) wins
+  #endif
+  #ifndef ESPNOW_PHY_RATE
+    #define ESPNOW_PHY_RATE WIFI_PHY_RATE_6M   // short airtime for crowded channels
   #endif
 #else
   #include "modules/wifi/wifi_comm.h"
@@ -59,6 +64,9 @@ Robot   *robot          = nullptr;
 #ifdef USE_ESPNOW_TRANSPORT
 static espnow_comm_config_t   espnow_config = {};
 static ESPNowComm            *espnow_comm   = nullptr;
+static UsbSerialComm         *usb_comm      = nullptr;
+static ProtocolComm          *comm_serial   = nullptr;
+static v3s::RobotLink         robot_link;
 #else
 static wifi_comm_config_t     wifi_config   = {};
 static WiFiComm              *wifi_comm     = nullptr;
@@ -101,8 +109,26 @@ static void control_watchdog_step() {
     }
 }
 
+static void stop_motors() {
+    robot->drive_wheels(0.0f, 0.0f);
+    robot->set_torque(false);
+    last_command_tick = 0;
+}
+
+#ifdef USE_ESPNOW_TRANSPORT
 // ------------------------------------------------------------------
-// Protocol callbacks
+// V3S Link hooks (authorization/lease handled inside RobotLink)
+// ------------------------------------------------------------------
+static void link_drive(float l, float r) { apply_wheel_command(l, r); }
+static void link_stop()                  { stop_motors(); }
+static void link_state(float &rpm_l, float &rpm_r, bool &torque) {
+    rpm_l  = motor_esquerdo->get_velocity();
+    rpm_r  = motor_direito->get_velocity();
+    torque = robot->get_torque();
+}
+#else
+// ------------------------------------------------------------------
+// Protocol callbacks (WiFi/UDP build)
 // ------------------------------------------------------------------
 static void handle_set_target_vel(
     void *handler_arg, esp_event_base_t base, int32_t id, void *event_data
@@ -152,6 +178,7 @@ static void handle_ping(
         comm->send_reply(msg, nullptr, 0);
     }
 }
+#endif  // USE_ESPNOW_TRANSPORT
 
 // ------------------------------------------------------------------
 // FreeRTOS tasks
@@ -332,14 +359,19 @@ void setup() {
     delay(WIFI_START_DELAY_MS);
 
 #ifdef USE_ESPNOW_TRANSPORT
-    // ---- ProtocolComm + ESPNowComm bring-up (broadcast, fixed channel) ----
-    espnow_config.channel    = (uint8_t)ESPNOW_CHANNEL;
+    // ---- V3S Link: ESP-NOW + USB serial, both feeding RobotLink ----
+    espnow_config.channel    = v3s::RobotLink::stored_channel((uint8_t)ESPNOW_CHANNEL);
     static const uint8_t broadcast_mac[6] = ESPNOW_BROADCAST_MAC;
     memcpy(espnow_config.peer_mac, broadcast_mac, 6);
     espnow_config.auto_start = true;
+    espnow_config.phy_rate   = (uint8_t)ESPNOW_PHY_RATE;
+    espnow_config.tx_power   = 0;     // default 20 dBm
 
+    const uint8_t robot_id = v3s::RobotLink::stored_id();
     espnow_comm = new ESPNowComm("ESPNow", &espnow_config);
-    comm        = new ProtocolComm("Communication", ID_DEVICE, espnow_comm);
+    comm        = new ProtocolComm("Communication", robot_id, espnow_comm);
+    usb_comm    = new UsbSerialComm("USB");
+    comm_serial = new ProtocolComm("SerialLink", robot_id, usb_comm);
 #else
     // ---- ProtocolComm + WiFiComm bring-up ----
     wifi_config.mode = WIFI_MODE_STA;
@@ -355,6 +387,20 @@ void setup() {
 
     comm->create_event_loop();
 
+#ifdef USE_ESPNOW_TRANSPORT
+    comm_serial->create_event_loop();
+    CommRet_t cret = comm->init();
+    DEBUG_SERIAL("COMM", "ESP-NOW link init -> %s", comm_ret_to_str(cret));
+    cret = comm_serial->init();
+    DEBUG_SERIAL("COMM", "USB serial link init -> %s", comm_ret_to_str(cret));
+
+    v3s::RobotHooks hooks = { link_drive, link_stop, link_state };
+    robot_link.begin(comm, espnow_comm, comm_serial, hooks);
+
+    char status_str[20];
+    snprintf(status_str, sizeof(status_str), "ID %02X ch%u", robot_link.id(), robot_link.channel());
+    debug_display_set_ip(status_str);
+#else
     comm->register_event_loop_callback(handle_set_target_vel,
                                        PROTO_CMD_SET_TARGET_VEL, nullptr);
     comm->register_event_loop_callback(handle_stop,
@@ -362,17 +408,10 @@ void setup() {
     comm->register_event_loop_callback(handle_ping,
                                        PROTO_CMD_PING, nullptr);
 
-    // Initialize the transport (WiFi/UDP or ESP-NOW) + start protocol tasks.
+    // Initialize the transport (WiFi/UDP) + start protocol tasks.
     CommRet_t cret = comm->init();
     DEBUG_SERIAL("COMM", "ProtocolComm init -> %s", comm_ret_to_str(cret));
 
-#ifdef USE_ESPNOW_TRANSPORT
-    DEBUG_SERIAL("ESPNOW", "ch=%d id=0x%02X (broadcast)",
-        ESPNOW_CHANNEL, (int)ID_DEVICE);
-    char status_str[16];
-    snprintf(status_str, sizeof(status_str), "ESP-NOW ch%d", ESPNOW_CHANNEL);
-    debug_display_set_ip(status_str);
-#else
     if (wifi_comm->connected) {
         wifi_ip4_t addr;
         wifi_comm->get_local_address(&addr);

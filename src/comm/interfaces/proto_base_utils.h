@@ -75,6 +75,11 @@ typedef enum : uint8_t {
     PROTO_CMD_PING                  = 0x42,
     PROTO_CMD_REQ_PING              = 0x43,
     PROTO_CMD_REQ_ACCEL_DATA        = 0x44,
+    // V3S Link (discovery + exclusive controller lease), see docs/protocol.md
+    PROTO_CMD_DISCOVER              = 0x50,
+    PROTO_CMD_CONNECT               = 0x51,
+    PROTO_CMD_DISCONNECT            = 0x52,
+    PROTO_CMD_SET_CHANNEL           = 0x53,
     PROTO_CMD_DEBUG_TEXT            = 0xA0,
     PROTO_CMD_TEXT                  = 0xA1,
     PROTO_CMD_BUFFER                = 0xA2,

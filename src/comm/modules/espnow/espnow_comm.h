@@ -16,6 +16,8 @@
 #include "esp_idf_version.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
+#include <atomic>
 
 class ESPNowComm : public CommBase {
   private:
@@ -57,4 +59,21 @@ class ESPNowComm : public CommBase {
                            CommAddr_t &addr,
                            uint32_t timeout = 0) override;
     size_t    available() const override;
+
+    /** Switch the radio channel at runtime (1..13). Peers follow the current channel. */
+    CommRet_t set_channel(uint8_t channel);
+    uint8_t   get_channel() const { return cfg ? cfg->channel : 0; }
+    void      get_self_mac(uint8_t mac[6]) const;
+
+    uint32_t  tx_ok_count()   const { return tx_ok.load(); }
+    uint32_t  tx_fail_count() const { return tx_fail.load(); }
+    uint32_t  rx_drop_count() const { return rx_drop.load(); }
+
+  private:
+    bool ensure_peer(const uint8_t mac[6]);
+    uint8_t  peer_mac[ESPNOW_MAX_UNICAST_PEERS][6] = {};
+    uint32_t peer_last_use[ESPNOW_MAX_UNICAST_PEERS] = {};
+    bool     peer_used[ESPNOW_MAX_UNICAST_PEERS] = {};
+    SemaphoreHandle_t peer_mutex = nullptr;
+    std::atomic<uint32_t> tx_ok{0}, tx_fail{0}, rx_drop{0};
 };

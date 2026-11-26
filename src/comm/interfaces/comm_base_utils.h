@@ -19,6 +19,7 @@ typedef enum : uint8_t {
     COMM_TYPE_BLUETOOTH,
     COMM_TYPE_WIFI,
     COMM_TYPE_UROS,
+    COMM_TYPE_USB_SERIAL,
 } CommType_t;
 
 static inline const char* comm_type_to_str(CommType_t type) {
@@ -29,6 +30,7 @@ static inline const char* comm_type_to_str(CommType_t type) {
         case COMM_TYPE_BLUETOOTH: return "COMM_TYPE_BLUETOOTH";
         case COMM_TYPE_WIFI:      return "COMM_TYPE_WIFI";
         case COMM_TYPE_UROS:      return "COMM_TYPE_UROS";
+        case COMM_TYPE_USB_SERIAL: return "COMM_TYPE_USB_SERIAL";
         default:                  return "COMM_TYPE_UNKNOWN";
     }
 }
