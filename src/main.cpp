@@ -264,8 +264,8 @@ void wifi_monitor_Task(void *pvParameters) {
     && !defined(GY521_SELF_TEST) && !defined(KINEMATICS_SELF_TEST) \
     && !defined(STRAIGHT_SELF_TEST)
 
-// Force A4988 EN HIGH (disabled) and STEP/DIR LOW the instant setup() runs,
-// before any other init can stall. A4988 EN has an internal pull-DOWN, so a
+// Force DRV8825 ~EN HIGH (disabled) and STEP/DIR LOW the instant setup() runs,
+// before any other init can stall. The Pololu carrier pulls ~EN DOWN, so a
 // floating EN reads LOW and enables the H-bridges. Energized coils during the
 // USB-CDC wait + OLED init cause a 3.3V sag that triggers brownout reset.
 static void motors_safe_init(void) {
@@ -277,7 +277,7 @@ static void motors_safe_init(void) {
         .intr_type    = GPIO_INTR_DISABLE
     };
     gpio_config(&en_cfg);
-    gpio_set_level(ENABLE_PIN, 1);  // A4988 EN active-low: HIGH = disabled
+    gpio_set_level(ENABLE_PIN, 1);  // DRV8825 ~EN active-low: HIGH = disabled
 
     gpio_config_t step_cfg = {
         .pin_bit_mask = (1ULL << M1_VEL_PIN) | (1ULL << M2_VEL_PIN)
@@ -312,13 +312,13 @@ void setup() {
     DEBUG_SERIAL("BOOT", "Stepper L ctor begin");
     motor_esquerdo = new Stepper(M1_VEL_PIN, M1_DIR_PIN, ENABLE_PIN,
                                  LEDC_CHANNEL_0, LEDC_TIMER_0,
-                                 Stepper::DRIVER_A4988, 1, false);
+                                 Stepper::DRIVER_DRV8825, STEPPER_MICROSTEPS, false);
     DEBUG_SERIAL("BOOT", "Stepper L ctor done");
 
     DEBUG_SERIAL("BOOT", "Stepper R ctor begin");
     motor_direito  = new Stepper(M2_VEL_PIN, M2_DIR_PIN, ENABLE_PIN,
                                  LEDC_CHANNEL_1, LEDC_TIMER_1,
-                                 Stepper::DRIVER_A4988, 1, true);
+                                 Stepper::DRIVER_DRV8825, STEPPER_MICROSTEPS, true);
     DEBUG_SERIAL("BOOT", "Stepper R ctor done");
 
     robot = new Robot(*motor_esquerdo, *motor_direito);

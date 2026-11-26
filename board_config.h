@@ -91,6 +91,13 @@
 // Enable compartilhado para ambos A4988
 #define ENABLE_PIN        ((gpio_num_t)(GPIO_NUM_10))
 
+/** Microstepping set by the M0/M1/M2 solder jumpers (DRV8825).
+ *  Default jumpers (pads 1-2 bridged, all to 3V3) = 1/32. Change this if you
+ *  re-bridge them: 1, 2, 4, 8, 16 or 32. */
+#ifndef STEPPER_MICROSTEPS
+#define STEPPER_MICROSTEPS 32
+#endif
+
 // ---------------------------------------------------------------------------
 // OLED 0.91" I2C Display (SSD1306)
 // ESP32-C3 Super Mini: SDA = GPIO8, SCL = GPIO9

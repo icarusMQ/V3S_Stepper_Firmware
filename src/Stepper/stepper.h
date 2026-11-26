@@ -11,28 +11,31 @@
 
 // Definições das propriedades do motor NEMA 
 #define WHEEL_DIAMETER_MM       73.0 // mm 
-#define MICRO_STEP_RESOLUTION   1    // default microstep (full-step; can be overridden per motor)
+// Microstep resolution must match the M0/M1/M2 solder jumpers on the board
+// (STEPPER_MICROSTEPS in board_config.h; default jumpers = 1/32).
+#define MICRO_STEP_RESOLUTION   STEPPER_MICROSTEPS
 #define STEP_RESOLUTION         1.8  // graus por passo
 #define PWM_DUTY_PERCENT        10   // Legacy; not used for step width anymore
-#define VEL_RPM_MAX             600 // desired max speed in RPM (full-step)
+#ifndef VEL_RPM_MAX
+#define VEL_RPM_MAX             300 // max wheel speed in RPM (|norm| = 1.0)
+#endif
 #define VEL_RPM_MIN             5   // minimum useful RPM
 
-// Safer PWM frequency bounds for step pulses
-#define MAX_PWM_FREQ 3000
-#define MIN_PWM_FREQ 300 
-// ( RPM / Segundo ) x ( 360 / STEP_RESOLUTION ) * MICROSTEPS 
-// DRV8825 @ M0/M1/M2=HIGH => 1/32 microstep. RPM2PWM maps RPM to microstep frequency accordingly.
+// STEP frequency bounds.
 // f = rpm/60 * (360/step_deg) * microsteps
-// With step_deg=1.8 and microsteps=32: f = rpm/60 * 200 * 32 = rpm * 106.666.. Hz
-// 250 rpm -> ~26.7 kHz (within 30 kHz max)
+// With step_deg=1.8 and microsteps=32: f = rpm/60 * 200 * 32 = rpm * 106.67 Hz
+//   5 rpm -> 533 Hz, 300 rpm -> 32 kHz. DRV8825 accepts STEP up to 250 kHz.
+// LEDC (10-bit, 80 MHz APB) covers ~76 Hz .. ~78 kHz, so keep MIN above 76 Hz.
+#define MAX_PWM_FREQ            32000
+#define MIN_PWM_FREQ            100
 // Legacy RPM->frequency macro kept for reference; implementation now per-instance
 #define RPM2PWM(rpm) (uint32_t)fmaxf(fminf(((rpm) / 60.0f) * (360.0f / STEP_RESOLUTION) * MICRO_STEP_RESOLUTION, MAX_PWM_FREQ), MIN_PWM_FREQ)
 
 // Simple ramp in normalized units per second (|norm| in [0,1]).
-// 5.0 -> 0..1 in 200ms. Tune higher if the driver/motor handle it without
-// skipping steps. set_velocity(0) snaps to zero regardless of this value.
+// 1.5 -> 0..1 in ~0.67 s. Raise it if the motors keep up without skipping
+// steps. set_velocity(0) snaps to zero regardless of this value.
 #ifndef ACCEL_NORM_PER_S
-#define ACCEL_NORM_PER_S        0.1f
+#define ACCEL_NORM_PER_S        1.5f
 #endif
 
 // Deadzone with hysteresis around zero to avoid flicker

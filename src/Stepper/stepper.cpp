@@ -10,7 +10,7 @@ Stepper::Stepper(gpio_num_t pwm_pin, gpio_num_t dir_pin, gpio_num_t enable_pin, 
             _current_norm(0.0f), _target_norm(0.0f), _accel_norm(ACCEL_NORM_PER_S), _invert_dir(invert_dir),
             _last_applied_norm(0.0f), _in_deadzone(true), _last_freq_applied(0.0f)
 {
-    // Force EN HIGH (A4988 disabled, active-low) BEFORE reconfiguring the pin,
+    // Force ~EN HIGH (DRV8825 disabled, active-low) BEFORE reconfiguring the pin,
     // so we never re-enter a window where the driver could be enabled.
     gpio_set_level(_enb_pin, 1);
 
