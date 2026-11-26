@@ -31,6 +31,11 @@
   #ifndef ESPNOW_CHANNEL
     #define ESPNOW_CHANNEL 6          // default; the stored channel (SET_CHANNEL) wins
   #endif
+  #ifndef ESPNOW_TX_POWER
+    // 0.25 dBm units. ESP32-C3 SuperMini boards often emit a distorted signal
+    // at 20 dBm (poor antenna match); ~8.5 dBm (34) is the common fix.
+    #define ESPNOW_TX_POWER 34
+  #endif
   #ifndef ESPNOW_PHY_RATE
     #define ESPNOW_PHY_RATE WIFI_PHY_RATE_6M   // short airtime for crowded channels
   #endif
@@ -365,7 +370,7 @@ void setup() {
     memcpy(espnow_config.peer_mac, broadcast_mac, 6);
     espnow_config.auto_start = true;
     espnow_config.phy_rate   = (uint8_t)ESPNOW_PHY_RATE;
-    espnow_config.tx_power   = 0;     // default 20 dBm
+    espnow_config.tx_power   = ESPNOW_TX_POWER;
 
     const uint8_t robot_id = v3s::RobotLink::stored_id();
     espnow_comm = new ESPNowComm("ESPNow", &espnow_config);
